@@ -9,7 +9,7 @@ class RoombaEnv:
         self.width = width
         self.height = height
         self.screen = pygame.display.set_mode((width, height))
-        pygame.display.set_caption("Roomba Simulation")
+        pygame.display.set_caption("Roomba RL Simulation")
 
         self.font = pygame.font.Font(None, 36)
         self.roomba_radius = 20
@@ -34,7 +34,8 @@ class RoombaEnv:
         self.generate_dirt(100)
         
         self.score = 0
-        self.points_per_dirt = 10
+        self.reward = 0  # Store last step's reward
+        self.last_action = "N/A"
 
         self.WHITE = (255, 255, 255)
         self.BLACK = (0, 0, 0)
@@ -68,6 +69,7 @@ class RoombaEnv:
             self.steps_taken = 0
         if self.is_at_charging_station():
             self.battery_level = min(100, self.battery_level + self.charging_rate)
+            self.reward += 20  # Reward for reaching charging station at low battery
 
     def generate_dirt(self, num_particles):
         self.dirt_particles = []
@@ -86,22 +88,33 @@ class RoombaEnv:
 
     def clean_dirt(self):
         roomba_rect = pygame.Rect(self.roomba_pos[0] - self.roomba_radius, self.roomba_pos[1] - self.roomba_radius, self.roomba_radius * 2, self.roomba_radius * 2)
-        self.dirt_particles = [dirt for dirt in self.dirt_particles if not roomba_rect.collidepoint(dirt[0], dirt[1])]
-        self.score += self.points_per_dirt
+        cleaned = [dirt for dirt in self.dirt_particles if roomba_rect.collidepoint(dirt[0], dirt[1])]
+        self.dirt_particles = [dirt for dirt in self.dirt_particles if dirt not in cleaned]
+        
+        if cleaned:
+            self.score += 10 * len(cleaned)
+            self.reward += 10 * len(cleaned)  # Reward for cleaning dirt
 
     def move_roomba(self):
+        self.reward = -1  # Penalize each step to encourage efficiency
+
         if self.battery_level <= 10:
             direction = np.sign(self.charging_station_pos - self.roomba_pos)
+            self.last_action = "Going to charge"
         else:
             if random.random() < 0.1:
                 self.direction = random.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
             direction = self.direction
+            self.last_action = "Moving randomly"
 
         new_pos = self.roomba_pos + np.array(direction) * self.roomba_speed
         if not self.check_collision(new_pos):
             self.roomba_pos = new_pos
             self.steps_taken += 1
-
+        else:
+            self.reward -= 5  # Penalize for hitting a wall
+            self.last_action = "Hit a wall"
+        
         self.clean_dirt()
 
     def render(self):
@@ -117,11 +130,9 @@ class RoombaEnv:
         color = self.BLACK if self.battery_level > 50 else self.YELLOW if self.battery_level > 20 else self.RED
         pygame.draw.circle(self.screen, color, (int(self.roomba_pos[0]), int(self.roomba_pos[1])), self.roomba_radius)
         
-        self.screen.blit(self.font.render(f"Score: {self.score}", True, self.BLACK), (10, 10))
-        self.screen.blit(self.font.render(f"Battery: {int(self.battery_level)}%", True, self.BLACK), (10, 50))
-        self.screen.blit(self.font.render(f"Dirt Remaining: {len(self.dirt_particles)}", True, self.BLACK), (10, 90))
-        if self.is_at_charging_station():
-            self.screen.blit(self.font.render("CHARGING", True, self.GREEN), (10, 130))
+        metrics = [f"Score: {self.score}", f"Battery: {int(self.battery_level)}%", f"Dirt Remaining: {len(self.dirt_particles)}", f"Last Reward: {self.reward}", f"Last Action: {self.last_action}"]
+        for i, text in enumerate(metrics):
+            self.screen.blit(self.font.render(text, True, self.BLACK), (10, 10 + i * 40))
         
         pygame.display.flip()
 
